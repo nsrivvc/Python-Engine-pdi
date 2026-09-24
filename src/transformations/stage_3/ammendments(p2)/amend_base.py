@@ -46,7 +46,11 @@ per-posting descriptors, so an empty table changes nothing. The AmendRptgDesc
 field on the affected postings is rewritten to the joined value, so
 downstream sees the label that was acted on. `assert_pipeline_attributes()`
 runs before any row is written and fails the run if a row carries a mode the
-join would not recognize.
+join would not recognize. Once the table is specced, setting
+PipelineAttributes.require_coverage makes the same assert also demand a row
+for every TSP the run actually amends -- first instances excluded, since
+those are appended regardless of any mode -- so a pipeline being amended on
+descriptor guesswork stops the run rather than diverging quietly.
 
 Its table name, column names, and the accepted mode spellings all live in
 core/table_config.py (PipelineAttributes) -- change them there, and the DDL,
@@ -180,8 +184,9 @@ class ContractAmendments(PipelineTransformation):
         would silently fall back to per-posting descriptors -- a typo would
         change results without a sound -- so fail loudly instead.
 
-        TODO(pipeline-attributes): when the table is fully specced, extend
-        this to assert coverage (which TSPs must have a row)."""
+        Then, when the table is specced enough to require it
+        (PipelineAttributes.require_coverage), assert COVERAGE -- see
+        `_assert_attribute_coverage` below."""
         pat = f"{self.target_schema}.{PA.table}"
         bad = conn.exec_driver_sql(f"""
             SELECT {PA.duns_col}, {PA.mode_col} FROM {pat}
@@ -195,6 +200,74 @@ class ContractAmendments(PipelineTransformation):
                 f"{pat} declares amendment_reporting mode(s) this phase does "
                 f"not recognize (expected 'All Data' or 'Changes Only'): "
                 f"{listing}")
+
+        self._assert_attribute_coverage(conn)
+
+    def _assert_attribute_coverage(self, conn) -> None:
+        """Assert every TSP this run actually AMENDS declares a mode.
+
+        Coverage is only about the postings whose treatment the table
+        decides -- the NON-FIRST ones. A first instance is always appended
+        no matter what any descriptor or mode says (rule 2), so a TSP that
+        only ever sent first instances needs no row and is not demanded one.
+        The predicate below therefore mirrors CLASSIFY's `_is_first` exactly:
+        change one and change the other.
+
+        Postings with no TSP id are skipped -- no attributes row could cover
+        them, so failing here would only report an unfixable source problem
+        that belongs upstream.
+
+        Off unless `PipelineAttributes.require_coverage` is set, because
+        until the table is fully specced a missing row is a legitimate
+        fallback to the posting's own descriptor rather than a mistake."""
+        if not PA.require_coverage:
+            return
+
+        pat = f"{self.target_schema}.{PA.table}"
+        src = f"{self.source_schema}.{self.source_table}"
+        tgt = f"{self.target_schema}.{self.table_name}"
+        pc = self.posted_col
+
+        # Pipelines knowingly left on descriptor fallback.
+        exempt = ""
+        if PA.coverage_exempt_duns:
+            exempt = ("  AND btrim(c._duns) NOT IN "
+                      f"({PA.sql_list(PA.coverage_exempt_duns)})")
+
+        missing = conn.exec_driver_sql(f"""
+            WITH consumed AS (
+                SELECT s.{self.partner_col} AS _duns,
+                       (row_number() OVER (
+                            PARTITION BY s.{self.contract_id_col}, s.{self.partner_col}
+                            ORDER BY NULLIF(s.{pc}, '')::TIMESTAMPTZ ASC NULLS FIRST,
+                                     s.bronze_row_id ASC) = 1
+                        AND NOT EXISTS (SELECT 1 FROM {tgt} t
+                                        WHERE t.amend_version_status = 'Current'
+                                          AND {self._key_match('t', 's')})
+                       ) AS _is_first
+                FROM {src} s
+                WHERE lower(coalesce(s.{self.status_col}, '')) = 'fresh'
+                   OR NOT EXISTS (SELECT 1 FROM {tgt})
+            )
+            SELECT c._duns, count(*) AS postings
+            FROM consumed c
+            WHERE NOT c._is_first
+              AND coalesce(btrim(c._duns), '') <> ''
+              AND NOT EXISTS (SELECT 1 FROM {pat} pa
+                              WHERE pa.{PA.duns_col} = c._duns){exempt}
+            GROUP BY c._duns
+            ORDER BY postings DESC, c._duns
+        """).all()
+
+        if missing:
+            listing = "; ".join(f"{duns} ({n} posting{'s' if n != 1 else ''})"
+                                for duns, n in missing)
+            raise ValueError(
+                f"{pat} is missing a row for {len(missing)} TSP(s) whose "
+                f"{self.feed} amendments this run would decide: {listing}. "
+                f"Add each one's amendment_reporting mode, or list it in "
+                f"PipelineAttributes.coverage_exempt_duns to keep it on "
+                f"per-posting descriptor fallback.")
 
     # ------------------------------------------------------------ transform
     def _stage_statements(self) -> List[str]:

@@ -34,6 +34,26 @@ from .. import transformations  # noqa: F401  (side-effect import)
 log = get_logger(__name__)
 
 
+#: How a run touched its target table. This is the *write semantics* of the
+#: transformation, which `status` alone does not carry: a succeeded run may
+#: have appended to an archive, folded rows into a ledger it preserved, or
+#: dropped and rebuilt the table from scratch.
+#:
+#:   APPENDED  - rows added to a raw archive; nothing is removed (stage 2's
+#:               json_to_raw, which is a standalone loader and does not run
+#:               through run_one -- the constant is here so consumers have one
+#:               vocabulary for all four cases).
+#:   PRESERVED - `incremental` target: never dropped, even on --reload. New
+#:               rows are folded in; 0 rows means nothing changed.
+#:   REBUILT   - dropped and recreated this run, so the contents are
+#:               re-materialized and BIGSERIAL ids restart at 1.
+#:   SKIPPED   - no CREATE, no INSERT. A deliberate no-op.
+WRITE_APPENDED = "appended"
+WRITE_PRESERVED = "preserved"
+WRITE_REBUILT = "rebuilt"
+WRITE_SKIPPED = "skipped"
+
+
 @dataclass
 class Result:
     name: str
@@ -41,6 +61,9 @@ class Result:
     rows: int = 0
     duration_s: float = 0.0
     error: str = ""
+    #: One of the WRITE_* constants above - see run_one, which decides it in
+    #: the same branch that decides whether to keep, drop or skip the table.
+    write_mode: str = ""
 
 
 def group_of(t: PipelineTransformation) -> str:
@@ -153,8 +176,15 @@ def run_one(name: str, reload: bool = False) -> Result:
             if missing:
                 msg = f"missing sources: {', '.join(missing)}"
                 log.warning("[%s] skipped — %s", name, msg)
-                return Result(name, "skipped", 0, time.perf_counter() - start, msg)
+                return Result(name, "skipped", 0, time.perf_counter() - start, msg,
+                              WRITE_SKIPPED)
 
+            # A target that does not exist yet is materialized by this run, so
+            # the default is REBUILT; the branches below correct it where the
+            # table already exists. An incremental target is PRESERVED either
+            # way -- on its very first run it is the ledger being opened, not a
+            # derived view being recomputed.
+            write_mode = WRITE_PRESERVED if t.incremental else WRITE_REBUILT
             if _silver_table_exists(conn, t):
                 if t.incremental:
                     # The table is state the transformation owns across runs
@@ -166,7 +196,8 @@ def run_one(name: str, reload: bool = False) -> Result:
                 elif not reload:
                     msg = f"target table already exists: {t.target_schema}.{t.table_name}"
                     log.info("[%s] skipped — %s", name, msg)
-                    return Result(name, "skipped", 0, time.perf_counter() - start, msg)
+                    return Result(name, "skipped", 0, time.perf_counter() - start, msg,
+                                  WRITE_SKIPPED)
                 else:
                     # --reload: drop and rebuild so the table refreshes from
                     # source. Inside the same transaction, so a failed rebuild
@@ -174,10 +205,16 @@ def run_one(name: str, reload: bool = False) -> Result:
                     log.warning("[%s] reload - dropping %s.%s", name, t.target_schema, t.table_name)
                     conn.exec_driver_sql(f"DROP TABLE IF EXISTS {t.target_schema}.{t.table_name}")
 
+            # Machine-readable restatement of the branch above, for log readers
+            # that cannot import Result (the dashboard reads GitHub Actions job
+            # logs). Additive: the lines above keep their exact wording.
+            log.info("[%s] write_mode=%s target=%s.%s", name, write_mode,
+                     t.target_schema, t.table_name)
+
             rows = t.run(conn)
         dur = time.perf_counter() - start
         log.info("[%s] succeeded — %s rows affected in %.2fs", name, rows, dur)
-        return Result(name, "succeeded", rows, dur)
+        return Result(name, "succeeded", rows, dur, "", write_mode)
 
     except Exception as exc:  # noqa: BLE001 — isolate and report per transformation
         dur = time.perf_counter() - start

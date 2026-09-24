@@ -26,5 +26,7 @@ class SilverInterruptibleRecDelPair(RecDelPairingTransformation):
     column_map = {
         **RecDelPairingTransformation.column_map,
         "contract_key": "interruptibleid",
+        # Quoted: `index` is a SQL keyword.
+        "loc_index": '"index"',
         "loc_qty": "itqtyloc",
     }

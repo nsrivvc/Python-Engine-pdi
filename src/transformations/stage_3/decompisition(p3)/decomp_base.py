@@ -248,6 +248,19 @@ class LocationsDecomposition(NestedExplosion, PipelineTransformation):
     contract_id_col: str = ""   # firmid | interruptibleid
     qty_col: str = ""           # kqtyloc | itqtyloc
 
+    #: What separates one location record from the next WITHIN a contract.
+    #: `uniqueid` alone cannot: it is the CONTRACT's id, repeated verbatim on
+    #: every element of its Locations array, so keying on it kept one row per
+    #: contract and silently discarded the rest (13 locations -> 1). The
+    #: array position is the only thing that differs between elements.
+    #: Quoted because `index` is a SQL keyword.
+    element_key_col: str = '"index"'
+
+    @property
+    def grain_key_sql(self) -> str:
+        """The location grain: contract + element position."""
+        return f"{self.contract_id_col}, uniqueid, {self.element_key_col}"
+
     def __init__(self) -> None:
         for attr in ("feed", "source_table", "contract_id_col", "qty_col",
                      "section", "element_keys"):
@@ -290,7 +303,7 @@ class LocationsDecomposition(NestedExplosion, PipelineTransformation):
             -- One row per contract per location record. NULLS NOT DISTINCT
             -- (PG15+) so a NULL key part still collides on rerun.
             CONSTRAINT uq_{self.table_name}
-                UNIQUE NULLS NOT DISTINCT ({self.contract_id_col}, uniqueid)
+                UNIQUE NULLS NOT DISTINCT ({self.grain_key_sql})
         );
         """
 
@@ -300,7 +313,9 @@ class LocationsDecomposition(NestedExplosion, PipelineTransformation):
         names = [n for n, _ in all_cols]
         sel = ",\n                   ".join(_select_expr(n) for n in names)
         ins = ",\n            ".join(_q(n) for n in names)
-        updatable = [n for n in names if n not in (self.contract_id_col, "uniqueid")]
+        key_names = {self.contract_id_col, "uniqueid",
+                     self.element_key_col.strip('"')}
+        updatable = [n for n in names if n not in key_names]
         sep = ",\n            "
         updates = sep.join(f"{_q(n):<24} = EXCLUDED.{_q(n)}" for n in updatable)
 
@@ -311,7 +326,7 @@ class LocationsDecomposition(NestedExplosion, PipelineTransformation):
         latest AS (
             SELECT * FROM (
                 SELECT s.*, row_number() OVER (
-                    PARTITION BY {self.contract_id_col}, uniqueid
+                    PARTITION BY {self.grain_key_sql}
                     ORDER BY ingestion_timestamp DESC, bronze_row_id DESC) AS _rn
                 FROM exploded s
             ) x WHERE _rn = 1
@@ -321,7 +336,7 @@ class LocationsDecomposition(NestedExplosion, PipelineTransformation):
         )
         SELECT {sel}
         FROM latest
-        ON CONFLICT ({self.contract_id_col}, uniqueid) DO UPDATE SET
+        ON CONFLICT ({self.grain_key_sql}) DO UPDATE SET
             {updates},
             decomp_loaded_ts         = now();
         """

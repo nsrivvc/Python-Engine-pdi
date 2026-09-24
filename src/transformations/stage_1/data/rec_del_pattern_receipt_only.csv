@@ -1,0 +1,2 @@
+Pipeline,DUNS,Order,Pattern,Regex
+default,0,7,"R^n (n>=1, m=0)",^R(?:-R)*$

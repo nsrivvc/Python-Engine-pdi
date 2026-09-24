@@ -16,10 +16,12 @@ transform off each paired row.
     ----------------                    --------------------
     EGTS-F167  70000  REC  25000   ->   EGTS-F167  70000 -> 80000   PAIRED
     EGTS-F167  80000  DEL  25000
-    EGTS-F168  70010  REC  12000   ->   EGTS-F168  70010 -> NULL    UNPAIRED_RECEIPT
+    EGTS-F168  70010  REC  12000   ->   EGTS-F168  70010 -> NULL    RECEIPT
 
-Unpaired locations are kept, not dropped, and flagged via `pair_status`, so a
-one-sided contract is visible downstream rather than silently vanishing.
+A one-sided location is kept, not dropped: `pair_status` is PAIRED when a
+receipt and a delivery matched, and RECEIPT or DELIVERY when that side
+stands alone -- so a one-sided contract is visible downstream rather than
+silently vanishing.
 
 TWO HOOKS ARE DELIBERATELY UNIMPLEMENTED
 ----------------------------------------
@@ -69,6 +71,11 @@ class RecDelPairingTransformation(PipelineTransformation):
     column_map: Dict[str, str] = {
         "contract_key": "firmid",
         "loc_code": "loc",
+        # The element's position within the contract's Locations array. The
+        # SAME loc code legitimately recurs at different indexes carrying
+        # different quantities, so the index is part of what identifies a
+        # location. None = the feed has no such column (awards); see `ref`.
+        "loc_index": None,
         "loc_name": "locname",
         "loc_zone": "loczn",
         "loc_purpose": "locpurp",
@@ -188,10 +195,11 @@ class RecDelPairingTransformation(PipelineTransformation):
 
             entity_type            TEXT NOT NULL,
             contract_key           TEXT NOT NULL,
-            pair_status            TEXT NOT NULL,  -- PAIRED | UNPAIRED_RECEIPT | UNPAIRED_DELIVERY
+            pair_status            TEXT NOT NULL,  -- PAIRED | RECEIPT | DELIVERY
 
             -- receipt side
             receipt_loc_code       TEXT,
+            receipt_loc_index      TEXT,
             receipt_loc_name       TEXT,
             receipt_zone           TEXT,
             receipt_qti            TEXT,
@@ -199,6 +207,7 @@ class RecDelPairingTransformation(PipelineTransformation):
 
             -- delivery side
             delivery_loc_code      TEXT,
+            delivery_loc_index     TEXT,
             delivery_loc_name      TEXT,
             delivery_zone          TEXT,
             delivery_qti           TEXT,
@@ -224,7 +233,8 @@ class RecDelPairingTransformation(PipelineTransformation):
             -- NULLS NOT DISTINCT (PG15+) so unpaired rows, where one side is
             -- NULL, still collide on rerun instead of duplicating.
             CONSTRAINT uq_{e}_rec_del_pair
-                UNIQUE NULLS NOT DISTINCT (contract_key, receipt_loc_code, delivery_loc_code)
+                UNIQUE NULLS NOT DISTINCT (contract_key, receipt_loc_code, receipt_loc_index,
+                                           delivery_loc_code, delivery_loc_index)
         );
         """
 
@@ -238,16 +248,24 @@ class RecDelPairingTransformation(PipelineTransformation):
         code, nm = self.col("loc_code"), self.col("loc_name")
         # Zone is optional per feed (awards has none) -- see ref().
         zn_r, zn_d = self.ref("r", "loc_zone"), self.ref("d", "loc_zone")
+        # Optional per feed, exactly like zone: awards carries no Index.
+        ix_r, ix_d = self.ref("r", "loc_index"), self.ref("d", "loc_index")
         purp, qti, qty = self.col("loc_purpose"), self.col("loc_qti"), self.col("loc_qty")
         sys_, api = self.col("source_system"), self.col("source_api")
         run, hsh = self.col("pipeline_run_id"), self.col("hash_key")
+
+        # Feeds that carry an Index dedupe per (contract, loc, purpose, index):
+        # one loc code recurring at several indexes is several locations, not a
+        # reloaded duplicate. Feeds without one keep the old three-part grain.
+        idx_col = self.col("loc_index")
+        idx_part = f", {idx_col}" if idx_col else ""
 
         if self.dedupe_order:
             base = f"""
         deduped AS (
             SELECT * FROM (
                 SELECT s.*, row_number() OVER (
-                    PARTITION BY {key}, {code}, upper({purp})
+                    PARTITION BY {key}, {code}, upper({purp}){idx_part}
                     ORDER BY {self.dedupe_order}) AS _rn
                 FROM src s
             ) x WHERE _rn = 1
@@ -270,8 +288,8 @@ class RecDelPairingTransformation(PipelineTransformation):
         )
         INSERT INTO {s}.{self.table_name} AS tgt (
             entity_type, contract_key, pair_status,
-            receipt_loc_code, receipt_loc_name, receipt_zone, receipt_qti, receipt_qty_dth,
-            delivery_loc_code, delivery_loc_name, delivery_zone, delivery_qti, delivery_qty_dth,
+            receipt_loc_code, receipt_loc_index, receipt_loc_name, receipt_zone, receipt_qti, receipt_qty_dth,
+            delivery_loc_code, delivery_loc_index, delivery_loc_name, delivery_zone, delivery_qti, delivery_qty_dth,
             path_qty_dth,
             term_begin_ts, term_end_ts, term_days, term_category,
             source_system, source_api, pipeline_run_id,
@@ -281,13 +299,13 @@ class RecDelPairingTransformation(PipelineTransformation):
             '{self.entity}',
             COALESCE(r.{key}, d.{key}),
             CASE
-                WHEN r.{key} IS NULL THEN 'UNPAIRED_DELIVERY'
-                WHEN d.{key} IS NULL THEN 'UNPAIRED_RECEIPT'
+                WHEN r.{key} IS NULL THEN 'DELIVERY'
+                WHEN d.{key} IS NULL THEN 'RECEIPT'
                 ELSE 'PAIRED'
             END,
 
-            r.{code}, r.{nm}, {zn_r}, r.{qti}, NULLIF(r.{qty}, '')::NUMERIC,
-            d.{code}, d.{nm}, {zn_d}, d.{qti}, NULLIF(d.{qty}, '')::NUMERIC,
+            r.{code}, {ix_r}, r.{nm}, {zn_r}, r.{qti}, NULLIF(r.{qty}, '')::NUMERIC,
+            d.{code}, {ix_d}, d.{nm}, {zn_d}, d.{qti}, NULLIF(d.{qty}, '')::NUMERIC,
 
             -- SPEC: reconcile receipt vs delivery qty into path_qty_dth
             NULL::NUMERIC,
@@ -305,7 +323,8 @@ class RecDelPairingTransformation(PipelineTransformation):
         FULL OUTER JOIN del d
               ON r.{key} = d.{key}
              AND ({self.pair_predicate_sql()})
-        ON CONFLICT (contract_key, receipt_loc_code, delivery_loc_code) DO UPDATE SET
+        ON CONFLICT (contract_key, receipt_loc_code, receipt_loc_index,
+                     delivery_loc_code, delivery_loc_index) DO UPDATE SET
             entity_type            = EXCLUDED.entity_type,
             pair_status            = EXCLUDED.pair_status,
             receipt_loc_name       = EXCLUDED.receipt_loc_name,

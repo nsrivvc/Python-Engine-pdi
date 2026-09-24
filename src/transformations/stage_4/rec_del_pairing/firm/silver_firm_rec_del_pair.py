@@ -23,8 +23,17 @@ class SilverFirmRecDelPair(RecDelPairingTransformation):
     table_name = "firm_rec_del_pair"
     entity = "firm"
 
+    # The firm feed spells location purpose with the NAESB codes, not the
+    # REC/DEL default in table_config: M2 is a receipt point, MQ a delivery.
+    # Scoped to this subclass -- interruptible and awards still carry the
+    # default and need the same call made against their own data.
+    receipt_purpose = "M2"
+    delivery_purpose = "MQ"
+
     column_map = {
         **RecDelPairingTransformation.column_map,
         "contract_key": "firmid",
+        # Quoted: `index` is a SQL keyword.
+        "loc_index": '"index"',
         "loc_qty": "kqtyloc",
     }
