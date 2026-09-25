@@ -19,7 +19,7 @@ pipeline's own --reload). Then:
 
     http://127.0.0.1:8000/health              liveness probe
     http://127.0.0.1:8000/docs                interactive Swagger UI
-    http://127.0.0.1:8000/api/firms           -> data/firms_test.json
+    http://127.0.0.1:8000/api/firms           -> data/firm_transco_nationalgrid_10.json
     http://127.0.0.1:8000/api/interruptibles  -> data/interruptibles_test.json
     http://127.0.0.1:8000/api/ioc             -> data/ioc_test.json
     http://127.0.0.1:8000/api/awards          -> data/awards_test.json
@@ -78,7 +78,7 @@ def health():
 
 @app.get("/api/firms")
 def get_firms():
-    return load_fixture("firm_sample_worklow.json")
+    return load_fixture("firm_transco_nationalgrid_10.json")
 
 
 @app.get("/api/interruptibles")
