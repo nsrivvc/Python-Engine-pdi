@@ -23,13 +23,26 @@ except Exception:  # pragma: no cover
     pass
 
 
+#: The DBAPI this repo installs (requirements.txt: psycopg2-binary). Named in
+#: the URL explicitly because SQLAlchemy 2.1 changed what a bare
+#: "postgresql://" means -- from psycopg2 to psycopg (v3) -- so a fresh
+#: install on a CI runner resolved to a driver that was not there and died
+#: with "No module named 'psycopg'". A URL that already names a driver
+#: ("postgresql+pg8000://") is left alone.
+_DRIVER = "psycopg2"
+
+
 def _build_url() -> str:
     """Return a SQLAlchemy URL, either from DATABASE_URL or from PG* parts."""
-    url = os.getenv("DATABASE_URL")
+    # .strip(): the repo's DATABASE_URL secret carries a trailing newline
+    # (stage 2's connect() strips it for the same reason).
+    url = (os.getenv("DATABASE_URL") or "").strip()
     if url:
         # SQLAlchemy wants the "postgresql://" scheme (not "postgres://").
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql://", 1)
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", f"postgresql+{_DRIVER}://", 1)
         return url
 
     # Fallback: assemble from individual parts (handy for a local/dummy DB).
@@ -38,7 +51,7 @@ def _build_url() -> str:
     host = os.getenv("PGHOST", "localhost")
     port = os.getenv("PGPORT", "5432")
     db = os.getenv("PGDATABASE", "pipeline")
-    return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
+    return f"postgresql+{_DRIVER}://{user}:{pwd}@{host}:{port}/{db}"
 
 
 @dataclass
