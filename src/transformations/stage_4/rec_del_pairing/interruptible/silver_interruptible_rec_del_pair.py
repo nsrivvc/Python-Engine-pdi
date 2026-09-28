@@ -5,7 +5,7 @@ Rec-del pairing for INTERRUPTIBLE transport.
 
 Source: the interruptible locations table produced by the decomposition phase.
 All pairing and term logic lives in the shared base -- see pairing_base.py in this package,
-where the two `SPEC:` hooks are waiting for the business rules.
+where the `SPEC:` term hook is waiting for the business rule.
 
 TODO(confirm): the `column_map` overrides below are set to
 the expected decomposition output. Verify both once that phase lands.

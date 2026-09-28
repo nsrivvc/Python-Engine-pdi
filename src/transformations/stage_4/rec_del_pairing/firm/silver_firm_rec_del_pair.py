@@ -3,9 +3,11 @@ silver_firm_rec_del_pair.py
 ===========================
 Rec-del pairing for FIRM transport.
 
-Source: the firm locations table produced by the decomposition phase.
+Source: the firm locations table produced by the decomposition phase, after
+standardization(p4) has rewritten any pipeline-specific segment codes (Transco
+S8 / S9) into the feed's receipt / delivery descriptions.
 All pairing and term logic lives in the shared base -- see pairing_base.py in this package,
-where the two `SPEC:` hooks are waiting for the business rules.
+where the `SPEC:` term hook is waiting for the business rule.
 
 TODO(confirm): the `column_map` overrides below are set to
 the expected decomposition output. Verify both once that phase lands.

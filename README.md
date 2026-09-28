@@ -37,12 +37,19 @@ the three FINAL tables.
 
 - **Stage 3 in full.** Nothing is written. Rec-del pairing reads stage 3's
   locations tables, so those are the first thing worth filling in.
-- **Rec-del pairing: two hooks**, marked `SPEC:` in
+- **Rec-del pairing: one hook**, marked `SPEC:` in
   `src/transformations/stage_4/rec_del_pairing/pairing_base.py`:
-  - `pair_predicate_sql()` — how a receipt matches a delivery. The placeholder
-    pairs every receipt with every delivery on the same contract.
   - `term_columns_sql()` — the term transform. The placeholder passes the raw
     window through and leaves `term_days` / `term_category` NULL.
+
+  The pairing itself is in place: one row per receipt/delivery location, each
+  carrying its contract's formation (`R-D`, `R-R-R-D-D-D`), the configured
+  pattern that admitted it, a `PAIRED` / `FAIL` status, and a `pair_set_id`
+  that restarts at 1 per contract and is shared by the locations that belong
+  together. A contract with one receipt and one delivery is therefore two rows
+  (set 1, 1); the pattern regex decides the set unit (`^(R-D)+$` gives
+  1,1,2,2, anything else makes the whole formation one set). Contracts no
+  pattern admits still appear, marked `FAIL`.
 - **Master capacity in full.** The target model already exists as
   `public.final_core_master_capacity` (27 columns). Note it lives in `public`
   with PascalCase columns, unlike everything else this repo writes — worth
