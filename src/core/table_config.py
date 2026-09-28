@@ -130,6 +130,42 @@ class LocationsSource:
             ) from None
 
 
+class LocationStandardization:
+    """Per-pipeline remaps of what a location-purpose code MEANS, applied by
+    stage 3 standardization(p4) to each feed's decomposed locations table
+    (`<DECOMP_SCHEMA>.<feed>_locations`) in place.
+
+    Some pipelines report a segment endpoint under a code whose feed-level
+    description does not say which end it is. Transco posts both ends of a
+    pipeline segment as S8 / S9 ("Pipeline Segment defined by ... locations");
+    the business reads S8 as the delivery end and S9 as the receipt end. This
+    table says so, keyed by the TSP's DUNS so it applies to that pipeline's
+    rows and nobody else's.
+
+    The raw `locpurp` code is left untouched -- it is what the feed said, and
+    stage 4 keys on it. What changes are the descriptive fields the feed
+    leaves ambiguous: `locpurpdesc`, `locqti`, `locqtidesc`, which stage 5
+    carries into `location_purpose_code` / `location_qti` on the master
+    capacity model. The values are the ones the same feed uses on its own
+    explicit receipt (M2) and delivery (MQ) rows, so a standardized segment
+    end reads exactly like a point the feed labelled itself.
+    """
+
+    #: Audit column added to the locations table: which rule rewrote the row
+    #: (`<duns>:<code>`), NULL when no rule applied.
+    rule_col = "loc_std_rule"
+
+    #: TSP DUNS -> { locpurp code -> (locpurpdesc, locqti, locqtidesc) }.
+    #: Codes are compared upper-cased and trimmed; DUNS trimmed.
+    by_duns: Dict[str, Dict[str, Tuple[str, str, str]]] = {
+        # Transcontinental Gas Pipe Line Company, LLC
+        "007933021": {
+            "S8": ("Delivery Location", "2", "Delivery point (s) quantity"),
+            "S9": ("Receipt Location", "1", "Receipt point (s) quantity"),
+        },
+    }
+
+
 class ShipperMapping:
     """`<BRONZE_SCHEMA>.shipper_mapping` -- the dashboard's shipper (DUNS)
     scoping rows that deduplication(p1) filters Bronze through. The DDL and
