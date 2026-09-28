@@ -43,6 +43,7 @@ class SilverAwardsRatesMasterCapacity(MasterCapacityTransformation):
         "ngh_contract_id": "awardnumber",
         # The element's own Id is the natural row key.
         "rate_unique_id": "id",
+        "rate_sequence": "element_index",
         "rate_identification_code": "awardrateidentificationcode",
         # SPEC: AwardRate is the rate actually charged for the release;
         # ChargeRate / ChargeCode describe the charge component and are not mapped.

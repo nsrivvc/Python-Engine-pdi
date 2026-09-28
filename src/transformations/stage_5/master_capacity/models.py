@@ -93,6 +93,7 @@ LOCATIONS_COLUMNS: List[Column] = [
 RATES_COLUMNS: List[Column] = [
     ("ngh_contract_id", "TEXT"),          # contract join key (sheet: GS_ID linkage)
     ("rate_unique_id", "TEXT"),           # natural row key (stage-3 uniqueid)
+    ("rate_sequence", "INTEGER"),         # position of the rate in the contract's rates array
     ("rate_identification_code", "TEXT"),
     ("reporting_level", "TEXT"),
     ("rate_charged", "NUMERIC"),
@@ -138,5 +139,5 @@ COLUMNS_BY_GRAIN = {
 NATURAL_KEY_BY_GRAIN = {
     "core": ("ngh_contract_id",),
     "locations": ("ngh_contract_id", "location", "location_purpose_code"),
-    "rates": ("ngh_contract_id", "rate_unique_id"),
+    "rates": ("ngh_contract_id", "rate_unique_id", "rate_sequence"),
 }

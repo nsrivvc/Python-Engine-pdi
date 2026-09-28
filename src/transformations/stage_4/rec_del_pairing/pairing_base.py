@@ -8,9 +8,16 @@ WHAT THIS DOES
 --------------
 Each paired transport type (firm, interruptible, awards) produces a *locations*
 table at the end of the decomposition phase, holding one row per location with a
-purpose flag marking it a receipt (REC) or a delivery (DEL). This base turns that
-flat list into one row per receipt->delivery **path**, then hangs the term
-transform off each paired row.
+standardized purpose marking it a receipt or a delivery (anything else -- storage
+withdrawal / injection / area -- takes no part). This base
+
+  1. classes every location R or D and spells each contract's FORMATION in
+     location order ("R-D", "R-R-D-D", "R");
+  2. keeps only the contracts whose formation a configured pattern admits
+     (the dashboard's Rec-Del Pairings table -- RecDelPairing in
+     core/table_config.py); a contract no pattern admits produces no rows;
+  3. turns the admitted contracts' locations into one row per
+     receipt->delivery **path**, then hangs the term transform off each row.
 
     locations (flat)                    rec_del_pair (paths)
     ----------------                    --------------------
@@ -78,7 +85,8 @@ class RecDelPairingTransformation(PipelineTransformation):
         "loc_index": None,
         "loc_name": "locname",
         "loc_zone": "loczn",
-        "loc_purpose": "locpurp",
+        "loc_purpose": "locpurpdesc",
+        "tsp_duns": "tspduns",
         "loc_qti": "locqti",
         "loc_qty": "kqtyloc",
         "term_begin": "kentbegdatetime",
@@ -189,13 +197,18 @@ class RecDelPairingTransformation(PipelineTransformation):
         s, e = self.silver_schema, self.entity
         return f"""
         CREATE SCHEMA IF NOT EXISTS {s};
-
+        {RecDelPairing.pattern_ddl}
         CREATE TABLE IF NOT EXISTS {s}.{self.table_name} (
             rec_del_pair_id        BIGSERIAL PRIMARY KEY,
 
             entity_type            TEXT NOT NULL,
             contract_key           TEXT NOT NULL,
             pair_status            TEXT NOT NULL,  -- PAIRED | RECEIPT | DELIVERY
+
+            -- the contract's R/D formation in location order ("R-D", "R-R-D")
+            -- and the configured pattern that admitted it (NULL = no gate)
+            formation              TEXT,
+            pairing_pattern        TEXT,
 
             -- receipt side
             receipt_loc_code       TEXT,
@@ -246,19 +259,18 @@ class RecDelPairingTransformation(PipelineTransformation):
 
         key = self.col("contract_key")
         code, nm = self.col("loc_code"), self.col("loc_name")
-        # Zone is optional per feed (awards has none) -- see ref().
         zn_r, zn_d = self.ref("r", "loc_zone"), self.ref("d", "loc_zone")
-        # Optional per feed, exactly like zone: awards carries no Index.
         ix_r, ix_d = self.ref("r", "loc_index"), self.ref("d", "loc_index")
         purp, qti, qty = self.col("loc_purpose"), self.col("loc_qti"), self.col("loc_qty")
         sys_, api = self.col("source_system"), self.col("source_api")
         run, hsh = self.col("pipeline_run_id"), self.col("hash_key")
+        duns = self.ref("p", "tsp_duns")
 
-        # Feeds that carry an Index dedupe per (contract, loc, purpose, index):
-        # one loc code recurring at several indexes is several locations, not a
-        # reloaded duplicate. Feeds without one keep the old three-part grain.
         idx_col = self.col("loc_index")
         idx_part = f", {idx_col}" if idx_col else ""
+        order_col = idx_col or code     # location order within a contract
+
+        pt = RecDelPairing
 
         if self.dedupe_order:
             base = f"""
@@ -280,14 +292,64 @@ class RecDelPairingTransformation(PipelineTransformation):
             SELECT * FROM {src}
             {where}
         ),{base}
+        -- Every location classed R (receipt), D (delivery) or neither, by its
+        -- standardized purpose (RecDelPairing in core/table_config.py).
+        pool AS (
+            SELECT p.*,
+                   CASE WHEN upper(btrim(coalesce(p.{purp}, ''))) = '{self.receipt_purpose}'  THEN 'R'
+                        WHEN upper(btrim(coalesce(p.{purp}, ''))) = '{self.delivery_purpose}' THEN 'D'
+                   END AS rd
+            FROM {pool} p
+        ),
+        -- One row per contract: its R/D letters in location order, e.g. R-D.
+        formation AS (
+            SELECT p.{key} AS contract_key,
+                   max({duns}) AS tsp_duns,
+                   string_agg(p.rd, '-' ORDER BY p.{order_col}) AS formation
+            FROM pool p
+            WHERE p.rd IS NOT NULL
+            GROUP BY p.{key}
+        ),
+        -- The configured patterns (dashboard Configuration tab -> Rec-Del Pairings).
+        patterns AS (
+            SELECT id,
+                   "{pt.duns_col}"    AS duns,
+                   "{pt.order_col}"   AS ord,
+                   "{pt.pattern_col}" AS pattern,
+                   "{pt.regex_col}"   AS regex
+            FROM {pt.pattern_table}
+            WHERE NULLIF(btrim("{pt.regex_col}"), '') IS NOT NULL
+        ),
+        -- The pattern that admits each formation: the pipeline's own rows
+        -- (DUNS = the contract's TSP, leading zeros ignored) before the
+        -- 'default' rows (DUNS 0), then by Order.
+        extracted AS (
+            SELECT f.*,
+                   (SELECT p.pattern
+                      FROM patterns p
+                     WHERE (p.duns = 0
+                            OR p.duns::text = ltrim(regexp_replace(coalesce(f.tsp_duns, ''), '[^0-9]', '', 'g'), '0'))
+                       AND f.formation ~ p.regex
+                     ORDER BY (p.duns <> 0) DESC, p.ord NULLS LAST, p.id
+                     LIMIT 1) AS pairing_pattern
+            FROM formation f
+        ),
+        -- Extracted only when a pattern admits the formation. With no
+        -- patterns configured at all, every formation passes.
+        gated AS (
+            SELECT * FROM extracted
+            WHERE pairing_pattern IS NOT NULL
+               OR NOT EXISTS (SELECT 1 FROM patterns)
+        ),
         rec AS (
-            SELECT * FROM {pool} WHERE upper({purp}) = '{self.receipt_purpose}'
+            SELECT p.* FROM pool p JOIN gated g ON g.contract_key = p.{key} WHERE p.rd = 'R'
         ),
         del AS (
-            SELECT * FROM {pool} WHERE upper({purp}) = '{self.delivery_purpose}'
+            SELECT p.* FROM pool p JOIN gated g ON g.contract_key = p.{key} WHERE p.rd = 'D'
         )
         INSERT INTO {s}.{self.table_name} AS tgt (
             entity_type, contract_key, pair_status,
+            formation, pairing_pattern,
             receipt_loc_code, receipt_loc_index, receipt_loc_name, receipt_zone, receipt_qti, receipt_qty_dth,
             delivery_loc_code, delivery_loc_index, delivery_loc_name, delivery_zone, delivery_qti, delivery_qty_dth,
             path_qty_dth,
@@ -303,6 +365,7 @@ class RecDelPairingTransformation(PipelineTransformation):
                 WHEN d.{key} IS NULL THEN 'RECEIPT'
                 ELSE 'PAIRED'
             END,
+            g.formation, g.pairing_pattern,
 
             r.{code}, {ix_r}, r.{nm}, {zn_r}, r.{qti}, NULLIF(r.{qty}, '')::NUMERIC,
             d.{code}, {ix_d}, d.{nm}, {zn_d}, d.{qti}, NULLIF(d.{qty}, '')::NUMERIC,
@@ -323,10 +386,14 @@ class RecDelPairingTransformation(PipelineTransformation):
         FULL OUTER JOIN del d
               ON r.{key} = d.{key}
              AND ({self.pair_predicate_sql()})
+        JOIN gated g
+              ON g.contract_key = COALESCE(r.{key}, d.{key})
         ON CONFLICT (contract_key, receipt_loc_code, receipt_loc_index,
                      delivery_loc_code, delivery_loc_index) DO UPDATE SET
             entity_type            = EXCLUDED.entity_type,
             pair_status            = EXCLUDED.pair_status,
+            formation              = EXCLUDED.formation,
+            pairing_pattern        = EXCLUDED.pairing_pattern,
             receipt_loc_name       = EXCLUDED.receipt_loc_name,
             receipt_zone           = EXCLUDED.receipt_zone,
             receipt_qti            = EXCLUDED.receipt_qti,

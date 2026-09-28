@@ -47,6 +47,10 @@ class SilverAwardsRecDelPair(RecDelPairingTransformation):
     table_name = "awards_rec_del_pair"
     entity = "awards"
 
+    # The awards feed labels purpose by code, not by the gTRAN description.
+    receipt_purpose = "REC"
+    delivery_purpose = "DEL"
+
     column_map = {
         **RecDelPairingTransformation.column_map,
         "contract_key": "awardnumber",
@@ -54,6 +58,7 @@ class SilverAwardsRecDelPair(RecDelPairingTransformation):
         "loc_name": "locationname",
         "loc_zone": None,                       # not present in the awards feed
         "loc_purpose": "locationpurposecode",
+        "tsp_duns": None,                       # awards locations carry no TSP
         "loc_qti": "locationquantitytypeindicator",
         "loc_qty": "awardquantitylocation",
         "term_begin": "releasetermstartdate",

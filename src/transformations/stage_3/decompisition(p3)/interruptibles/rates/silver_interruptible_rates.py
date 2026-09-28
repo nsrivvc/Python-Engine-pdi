@@ -5,7 +5,7 @@ Decomposes the INTERRUPTIBLE feed's rates into `<DECOMP_SCHEMA>.interruptible_ra
 
 Source: `interruptible_dedup` (deduplication(p1) output -- rates carry no
         amendment marker), exploded on its nested `rates` JSON array.
-Key:    (interruptibleid, uniqueid)
+Key:    (interruptibleid, uniqueid, element_index)
 
 Column list is explicit rather than introspected so `--show-sql` works without a
 database. If the upstream table gains a column, add it here or it is not carried.
@@ -24,7 +24,7 @@ class SilverInterruptibleRates(GrainDecomposition):
     feed = "interruptible"
     grain = "rates"
     source_table = "interruptible_dedup"
-    key_cols_list = ["interruptibleid", "uniqueid"]
+    key_cols_list = ["interruptibleid", "uniqueid", "element_index"]
 
     section = "rates"
     parent_columns = ["interruptibleid", "posteddatetime", "tspduns", "tspname"]
@@ -89,6 +89,7 @@ class SilverInterruptibleRates(GrainDecomposition):
 
     columns = [
         "bronze_row_id",
+        "element_index",
         "maxdq",
         "mindq",
         "seasnlst",
