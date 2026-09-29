@@ -3,7 +3,8 @@ stage_4 -- Rec-Del Pairing
 ==========================
 Builds the curated Silver model on top of stage 3's staging tables.
 
-    rec_del_pairing/   pair receipts to deliveries, then apply the term transform
+    rec_del_pairing/   the stage-3 locations rows, carried whole, plus the
+                       rec-del pairing and its per-contract group id
 
 One workflow per source feed -- (stage4)rec_del_pairing_<feed>.yml -- so the
 feeds run and fail independently.

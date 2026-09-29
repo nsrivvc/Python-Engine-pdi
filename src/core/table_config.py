@@ -94,7 +94,7 @@ class PipelineAttributes:
 
 class RecDelPairing:
     """Stage 4's receipt/delivery split, pre-filtering and pattern gate. The
-    pairing SQL itself (and its two SPEC hooks) lives in pairing_base.py."""
+    pairing SQL itself lives in pairing_base.py."""
 
     #: Which location-purpose values mean receipt vs delivery. Compared
     #: upper-cased and trimmed against the feed's purpose column -- by default
@@ -109,16 +109,16 @@ class RecDelPairing:
     #: Each contract's locations, in location order, spell a formation of R
     #: and D letters ("R-D", "R-R-D-D", "R"). A contract is PAIRED when a
     #: configured pattern's regex admits that formation, and every one of its
-    #: receipt/delivery locations is written as its own row carrying a
-    #: `pair_set_id` that restarts at 1 per contract. The pattern's regex also
-    #: fixes the set: ^(X)+$ (e.g. ^(R-D)+$) makes each repetition of X one
-    #: set (R-D-R-D -> 1,1,2,2); any other shape admits the whole formation as
-    #: one set (R-R-R-D-D-D -> all 1). A pipeline's own rows (DUNS = the
-    #: contract's TSP) take precedence over the 'default' rows (DUNS 0);
-    #: within those, `Order` decides which pattern is recorded. A contract no
-    #: pattern admits still appears, every row marked FAIL with no set id.
-    #: With NO patterns configured at all every formation passes as one set
-    #: (same convention as the pipeline register).
+    #: receipt/delivery locations is written out -- the stage-3 row carried
+    #: whole -- with a `pair_group_id` that restarts at 1 per contract. The
+    #: pattern's regex also fixes the group: ^(X)+$ (e.g. ^(R-D)+$) makes each
+    #: repetition of X one group (R-D-R-D -> 1,1,2,2); any other shape admits
+    #: the whole formation as one group (R-R-R-D-D-D -> all 1). A pipeline's
+    #: own rows (DUNS = the contract's TSP) take precedence over the 'default'
+    #: rows (DUNS 0); within those, `Order` decides which pattern is recorded.
+    #: A contract no pattern admits still appears, every row marked FAIL with
+    #: no group id. With NO patterns configured at all every formation passes
+    #: as one group (same convention as the pipeline register).
     pattern_table = "public.rec_del_pairings"
     pipeline_col = "Pipeline"
     duns_col = "DUNS"
