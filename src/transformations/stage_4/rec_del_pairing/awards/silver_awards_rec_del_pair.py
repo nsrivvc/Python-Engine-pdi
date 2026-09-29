@@ -4,7 +4,7 @@ silver_awards_rec_del_pair.py
 Rec-del pairing for the AWARDS feed: `<DECOMP_SCHEMA>.awards_locations` ->
 `silver.awards_rec_del_pair`.
 
-See ../pairing_base.py for the pairing itself and the two SPEC hooks.
+See ../pairing_base.py for the pairing itself and the SPEC term hook.
 
 COLUMN MAP
 ----------
@@ -47,13 +47,21 @@ class SilverAwardsRecDelPair(RecDelPairingTransformation):
     table_name = "awards_rec_del_pair"
     entity = "awards"
 
+    # The awards feed labels purpose by code, not by the gTRAN description.
+    receipt_purpose = "REC"
+    delivery_purpose = "DEL"
+
     column_map = {
         **RecDelPairingTransformation.column_map,
         "contract_key": "awardnumber",
         "loc_code": "locationpropcode",
         "loc_name": "locationname",
         "loc_zone": None,                       # not present in the awards feed
+        # Awards posts the code itself as REC / DEL, so the raw code and the
+        # value classified on are the same column.
+        "loc_purpose_code": "locationpurposecode",
         "loc_purpose": "locationpurposecode",
+        "tsp_duns": None,                       # awards locations carry no TSP
         "loc_qti": "locationquantitytypeindicator",
         "loc_qty": "awardquantitylocation",
         "term_begin": "releasetermstartdate",

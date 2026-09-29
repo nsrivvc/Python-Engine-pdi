@@ -93,13 +93,51 @@ class PipelineAttributes:
 
 
 class RecDelPairing:
-    """Stage 4's receipt/delivery split and pre-filtering. The pairing SQL
-    itself (and its two SPEC hooks) lives in pairing_base.py."""
+    """Stage 4's receipt/delivery split, pre-filtering and pattern gate. The
+    pairing SQL itself (and its two SPEC hooks) lives in pairing_base.py."""
 
     #: Which location-purpose values mean receipt vs delivery. Compared
-    #: upper-cased against the feed's purpose column.
-    receipt_purpose = "REC"
-    delivery_purpose = "DEL"
+    #: upper-cased and trimmed against the feed's purpose column -- by default
+    #: the standardized DESCRIPTION (`locpurpdesc`), which is what the feed
+    #: puts on its own M2 / MQ rows and what standardization(p4) writes onto a
+    #: pipeline's segment ends (Transco S8 / S9). Anything else (storage
+    #: withdrawal / injection / area, ...) is neither and takes no part.
+    receipt_purpose = "RECEIPT LOCATION"
+    delivery_purpose = "DELIVERY LOCATION"
+
+    #: THE PATTERN GATE -- the dashboard's Rec-Del Pairings reference table.
+    #: Each contract's locations, in location order, spell a formation of R
+    #: and D letters ("R-D", "R-R-D-D", "R"). A contract is PAIRED when a
+    #: configured pattern's regex admits that formation, and every one of its
+    #: receipt/delivery locations is written as its own row carrying a
+    #: `pair_set_id` that restarts at 1 per contract. The pattern's regex also
+    #: fixes the set: ^(X)+$ (e.g. ^(R-D)+$) makes each repetition of X one
+    #: set (R-D-R-D -> 1,1,2,2); any other shape admits the whole formation as
+    #: one set (R-R-R-D-D-D -> all 1). A pipeline's own rows (DUNS = the
+    #: contract's TSP) take precedence over the 'default' rows (DUNS 0);
+    #: within those, `Order` decides which pattern is recorded. A contract no
+    #: pattern admits still appears, every row marked FAIL with no set id.
+    #: With NO patterns configured at all every formation passes as one set
+    #: (same convention as the pipeline register).
+    pattern_table = "public.rec_del_pairings"
+    pipeline_col = "Pipeline"
+    duns_col = "DUNS"
+    order_col = "Order"
+    pattern_col = "Pattern"
+    regex_col = "Regex"
+
+    #: The dashboard owns this table; this DDL is identical to its own, so
+    #: whichever side runs first creates it and the other's is a no-op.
+    pattern_ddl = f"""
+        CREATE TABLE IF NOT EXISTS {pattern_table} (
+            id        serial PRIMARY KEY,
+            "{pipeline_col}" text NOT NULL DEFAULT 'default',
+            "{duns_col}"     bigint NOT NULL DEFAULT 0,
+            "{order_col}"    integer,
+            "{pattern_col}"  text,
+            "{regex_col}"    text
+        );
+        """
 
     #: Filter applied when reading the locations source (None reads all).
     source_filter: Optional[str] = "ingestion_status = 'LOADED'"

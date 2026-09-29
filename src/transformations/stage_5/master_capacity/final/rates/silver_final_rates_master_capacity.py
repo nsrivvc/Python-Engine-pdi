@@ -29,7 +29,7 @@ class SilverFinalRatesMasterCapacity(FinalMasterCapacityTransformation):
     columns = RATES_COLUMNS
 
     # SPEC: one row per contract per rate record per feed.
-    natural_key = ("source_type", "ngh_contract_id", "rate_unique_id")
+    natural_key = ("source_type", "ngh_contract_id", "rate_unique_id", "rate_sequence")
 
     dedupe_note = (
         "one row per contract/rate per feed; seasonal rates may need the season "

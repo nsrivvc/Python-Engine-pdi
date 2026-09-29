@@ -176,6 +176,7 @@ class NestedExplosion:
         return (
             [("bronze_row_id", "BIGINT")]
             + [(c, "TEXT") for c in self.parent_columns]
+            + [("element_index", "BIGINT")]   # 1-based position in the array
             + [(k.lower(), "TEXT") for k in self.element_keys]
             + ELEMENT_AUDIT_COLUMNS
         )
@@ -202,6 +203,7 @@ class NestedExplosion:
         select_parts = (
             ["s.bronze_row_id"]
             + [f"s.{c}" for c in self.parent_columns]
+            + ["elem.element_index"]           # WITH ORDINALITY, see below
             + [f"el ->> '{k}' AS {_q(k.lower())}" for k in self.element_keys]
             + [
                 "s.raw_record_id",
@@ -219,7 +221,8 @@ class NestedExplosion:
         sel = ",\n                   ".join(select_parts)
         return f"""SELECT {sel}
             FROM {self.source_schema}.{self.source_table} s
-            CROSS JOIN LATERAL jsonb_array_elements({self._section_expr()}) AS el
+            CROSS JOIN LATERAL jsonb_array_elements({self._section_expr()})
+                 WITH ORDINALITY AS elem(el, element_index)
             WHERE jsonb_typeof({self._section_expr()}) = 'array'"""
 
     def _source_sql(self) -> str:

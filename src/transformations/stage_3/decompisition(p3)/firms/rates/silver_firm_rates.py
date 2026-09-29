@@ -5,7 +5,7 @@ Decomposes the FIRM feed's rates into `<DECOMP_SCHEMA>.firm_rates`.
 
 Source: `firm_dedup` (deduplication(p1) output -- rates carry no amendment
         marker), exploded on its nested `rates` JSON array: one row per rate.
-Key:    (firmid, uniqueid)
+Key:    (firmid, uniqueid, element_index)
 
 `element_keys` is the schema of one rate object in the payload, verbatim; each
 becomes the lowercase column named in `columns` below. `firmid`,
@@ -29,7 +29,7 @@ class SilverFirmRates(GrainDecomposition):
     feed = "firm"
     grain = "rates"
     source_table = "firm_dedup"
-    key_cols_list = ["firmid", "uniqueid"]
+    key_cols_list = ["firmid", "uniqueid", "element_index"]
 
     section = "rates"
     parent_columns = ["firmid", "posteddatetime", "tspduns", "tspname"]
@@ -92,6 +92,7 @@ class SilverFirmRates(GrainDecomposition):
 
     columns = [
         "bronze_row_id",
+        "element_index",
         "seasnlst",
         "seasnlend",
         "firmid",

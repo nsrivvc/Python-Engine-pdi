@@ -33,6 +33,7 @@ class SilverInterruptibleRatesMasterCapacity(MasterCapacityTransformation):
     column_map = {
         "ngh_contract_id": "interruptibleid",
         "rate_unique_id": "uniqueid",
+        "rate_sequence": "element_index",
         "rate_identification_code": "rateiddesc",
         "reporting_level": "rptlvldesc",
         "rate_charged": "NULLIF(ratechgd, '')::NUMERIC",

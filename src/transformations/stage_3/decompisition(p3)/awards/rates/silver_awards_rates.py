@@ -25,7 +25,7 @@ class SilverAwardsRates(GrainDecomposition):
     feed = "awards"
     grain = "rates"
     source_table = "awards_dedup"
-    key_cols_list = ["id", "locationpropcode", "locationpurpose"]
+    key_cols_list = ["id", "locationpropcode", "locationpurpose", "element_index"]
 
     section = "rates"
     parent_columns = ["postdatetime", "capacityawarddatetime", "releasetermstartdate", "releasetermenddate"]
@@ -68,6 +68,7 @@ class SilverAwardsRates(GrainDecomposition):
 
     columns = [
         "bronze_row_id",
+        "element_index",
         "postdatetime",
         "capacityawarddatetime",
         "releasetermstartdate",
