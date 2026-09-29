@@ -13,7 +13,7 @@ installed.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List
 
 from ..config import settings
 from ..logging_config import get_logger
@@ -52,3 +52,23 @@ def table_exists(conn, schema: str, table: str) -> bool:
         {"s": schema, "t": table},
     ).first()
     return row is not None
+
+
+def table_columns(conn, schema: str, table: str) -> List[str]:
+    """Column names of schema.table in ordinal order; empty if it does not exist.
+
+    Used by the master capacity finals to check that a per-feed table still
+    matches the shared model before UNIONing it -- a table created under an
+    older model keeps its old shape until its feed reruns with --reload.
+    """
+    from sqlalchemy import text
+
+    rows = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = :t "
+            "ORDER BY ordinal_position"
+        ),
+        {"s": schema, "t": table},
+    ).all()
+    return [r[0] for r in rows]

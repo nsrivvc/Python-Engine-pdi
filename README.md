@@ -224,6 +224,19 @@ present — that's the signal a drop is needed before it will load again.
 > This bites hardest while iterating on unfinished business rules: once a table
 > is created, editing its SQL changes nothing until you drop it.
 
+**Stage 5 model changes.** The per-feed master capacity tables are built from
+the shared model in `src/transformations/stage_5/master_capacity/models.py`.
+Changing that model (adding a column, changing a natural key) does not touch a
+per-feed table that already exists: it is only rebuilt when its own feed's
+stage 5 workflow reruns, which passes `--reload`. Until every feed has rerun,
+the FINAL tables refuse to consolidate and fail naming the stale table(s) and
+the missing column(s), rather than UNIONing a column the table does not have.
+Rerun the named feeds' `*(stage3_4_5).yml` chains (or their per-grain stage 5
+workflows), and `finals(stage5).yml` goes through on the next trigger. Note
+that only the `*(stage3_4_5).yml` orchestrators trigger `finals(stage5).yml`
+automatically; after a standalone per-grain stage 5 run, dispatch the finals
+by hand.
+
 ## Shipper scoping
 
 The dashboard's **Shippers** panel attaches shippers to a workflow as
