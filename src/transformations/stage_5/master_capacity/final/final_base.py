@@ -52,17 +52,23 @@ inputs.
 
 STALE PER-FEED TABLES
 ---------------------
-A per-feed table is only ever rebuilt by its own feed's stage 5 run (the
+"The table exists" is the proxy for "this feed ran", and it has a hole: a
+per-feed table is only ever rebuilt by its own feed's stage 5 run (the
 workflows pass --reload, which drops and recreates it). Change the shared model
 in models.py and every per-feed table keeps its old shape until its feed
-reruns -- and this UNION then selects a column that table does not have.
-Rather than die on a bare `UndefinedColumn`, `run()` compares each present
-table's columns to the model first and fails naming the stale tables, the
-missing columns and the remedy.
+reruns. A feed that is not selected in the current workflow therefore leaves
+behind a table in the OLD shape, and this UNION would select a column it does
+not have. So `run()` compares each present table's columns to the model first:
 
-It does NOT quietly leave a stale feed out of the UNION. That would publish a
-final table missing an entire feed and exit green, which is exactly the hazard
-the finals workflow exists to prevent.
+  * stale and EMPTY  -> left out of the UNION with a warning. It contributes
+                        nothing either way, so the final truthfully holds just
+                        the feeds that have data (e.g. firm alone). It is
+                        rebuilt the next time its own feed runs.
+  * stale WITH rows  -> fail, naming the table, the missing columns and the
+                        feed to rerun. Quietly leaving real rows out would
+                        publish a final missing a whole feed and exit green,
+                        which is exactly the hazard the finals workflow exists
+                        to prevent.
 """
 
 from __future__ import annotations
@@ -71,7 +77,7 @@ from typing import Dict, List, Tuple
 
 from ..master_base import _q
 from .....core.base import PipelineTransformation
-from .....db.connection import table_columns, table_exists
+from .....db.connection import row_count, table_columns, table_exists
 from .....logging_config import get_logger
 
 log = get_logger(__name__)
@@ -208,18 +214,20 @@ class FinalMasterCapacityTransformation(PipelineTransformation):
 
     # ------------------------------------------------------------------ run
     def run(self, conn) -> int:
-        """Consolidate whichever feeds are present, not all of them.
+        """Consolidate whichever feeds are present and usable, not all of them.
 
         A workflow in the orchestration interface can pull any subset of sources
         -- Firm only, Firm + IT, all four. Whatever ran produced its per-feed
         master capacity table; whatever did not, did not. So this looks up which
-        of those tables actually exist and unions exactly those.
+        of those tables actually exist and unions exactly those -- minus any
+        table that is empty AND predates the current model, which cannot be
+        selected from and has nothing to contribute (see the module docstring).
 
         The alternative -- requiring all four -- would leave the FINAL tables
         permanently blocked for any workflow that pulls a subset, which is the
         normal case rather than the exception.
 
-        With no feeds present at all there is nothing to consolidate, so it logs
+        With nothing usable present there is nothing to consolidate, so it logs
         and returns 0 rather than failing: the workflow is legitimately ahead of
         its inputs.
         """
@@ -228,16 +236,20 @@ class FinalMasterCapacityTransformation(PipelineTransformation):
             for feed, table in self.source_tables.items()
             if table_exists(conn, self.source_schema, table)
         }
-        missing = [f for f in self.source_tables if f not in present]
-        if not present:
+        absent = [f for f in self.source_tables if f not in present]
+        usable = self._usable_sources(conn, present)
+        left_out = [f for f in present if f not in usable]
+        if not usable:
             log.warning(
-                "[%s] no per-feed tables exist yet (looked for %s in %s) - nothing to consolidate",
-                self.name, ", ".join(self.source_tables.values()), self.source_schema)
+                "[%s] nothing to consolidate: no usable per-feed table (looked for %s in %s%s)",
+                self.name, ", ".join(self.source_tables.values()), self.source_schema,
+                f"; left out as empty and stale: {', '.join(left_out)}" if left_out else "")
             return 0
-        self._assert_sources_match_model(conn, present)
-        log.info("[%s] consolidating %d feed(s): %s%s", self.name, len(present),
-                 ", ".join(present), f"  (absent: {', '.join(missing)})" if missing else "")
-        self._active_sources = present
+        log.info("[%s] consolidating %d feed(s): %s%s%s", self.name, len(usable),
+                 ", ".join(usable),
+                 f"  (absent: {', '.join(absent)})" if absent else "",
+                 f"  (left out, empty and stale: {', '.join(left_out)})" if left_out else "")
+        self._active_sources = usable
         try:
             return super().run(conn)
         finally:
@@ -260,17 +272,28 @@ class FinalMasterCapacityTransformation(PipelineTransformation):
                 stale[feed] = lacking
         return stale
 
-    def _assert_sources_match_model(self, conn, present: Dict[str, str]) -> None:
-        """Fail -- naming table, columns and remedy -- if any feed's table is stale."""
+    def _usable_sources(self, conn, present: Dict[str, str]) -> Dict[str, str]:
+        """`present` minus stale-and-empty tables; fails on a stale table with rows."""
         stale = self.stale_sources(conn, present)
-        if not stale:
-            return
-        detail = "; ".join(
-            f"{self.source_schema}.{present[feed]} lacks {', '.join(cols)}"
-            for feed, cols in stale.items())
-        raise RuntimeError(
-            f"{len(stale)} per-feed {self.grain} table(s) predate the current model "
-            f"(stage_5/master_capacity/models.py) and cannot be consolidated: {detail}. "
-            f"A per-feed table is only rebuilt by its own feed's stage 5 run with "
-            f"--reload; rerun stage 5 {self.grain} for: {', '.join(stale)}, then this."
-        )
+        blocking: Dict[str, str] = {}
+        usable = dict(present)
+        for feed, cols in stale.items():
+            table = f"{self.source_schema}.{present[feed]}"
+            n = row_count(conn, self.source_schema, present[feed])
+            if n == 0:
+                log.warning(
+                    "[%s] leaving %s out: %s predates the current model (lacks %s) "
+                    "but is empty, so nothing is lost; it is rebuilt the next time "
+                    "%s runs", self.name, feed, table, ", ".join(cols), feed)
+                del usable[feed]
+            else:
+                blocking[feed] = f"{table} has {n} rows but lacks {', '.join(cols)}"
+        if blocking:
+            raise RuntimeError(
+                f"{len(blocking)} per-feed {self.grain} table(s) hold rows in a shape "
+                f"that predates the current model (stage_5/master_capacity/models.py) "
+                f"and cannot be consolidated: {'; '.join(blocking.values())}. "
+                f"A per-feed table is only rebuilt by its own feed's stage 5 run with "
+                f"--reload; rerun stage 5 {self.grain} for: {', '.join(blocking)}, then this."
+            )
+        return usable

@@ -228,14 +228,16 @@ present — that's the signal a drop is needed before it will load again.
 the shared model in `src/transformations/stage_5/master_capacity/models.py`.
 Changing that model (adding a column, changing a natural key) does not touch a
 per-feed table that already exists: it is only rebuilt when its own feed's
-stage 5 workflow reruns, which passes `--reload`. Until every feed has rerun,
-the FINAL tables refuse to consolidate and fail naming the stale table(s) and
-the missing column(s), rather than UNIONing a column the table does not have.
-Rerun the named feeds' `*(stage3_4_5).yml` chains (or their per-grain stage 5
-workflows), and `finals(stage5).yml` goes through on the next trigger. Note
-that only the `*(stage3_4_5).yml` orchestrators trigger `finals(stage5).yml`
-automatically; after a standalone per-grain stage 5 run, dispatch the finals
-by hand.
+stage 5 workflow reruns, which passes `--reload`. The FINAL tables check each
+per-feed table against the model before UNIONing it. A stale table that is
+**empty** (a feed that was not selected, or has no Bronze rows) is left out
+with a warning, so the final holds just the feeds that have data. A stale
+table that **holds rows** fails the final, naming the table, the missing
+column(s) and the feed to rerun, rather than silently publishing a final
+without that feed. Rerun the named feed's `*(stage3_4_5).yml` chain and
+`finals(stage5).yml` goes through on the next trigger. Only the
+`*(stage3_4_5).yml` orchestrators trigger `finals(stage5).yml` automatically;
+after a standalone per-grain stage 5 run, dispatch the finals by hand.
 
 ## Shipper scoping
 

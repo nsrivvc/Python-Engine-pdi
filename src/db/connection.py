@@ -72,3 +72,10 @@ def table_columns(conn, schema: str, table: str) -> List[str]:
         {"s": schema, "t": table},
     ).all()
     return [r[0] for r in rows]
+
+
+def row_count(conn, schema: str, table: str) -> int:
+    """Number of rows in schema.table (which must exist)."""
+    from sqlalchemy import text
+
+    return conn.execute(text(f"SELECT count(*) FROM {schema}.{table}")).scalar_one()
