@@ -21,7 +21,7 @@ not. Current state:
 | 3 | `standardization/` | Scaffolded, empty `logic.txt` |
 | 3 | `deduplication/` | Scaffolded, empty `logic.txt` |
 | 3 | `ammendments/` | Scaffolded, empty `logic.txt` |
-| 4 | `rec_del_pairing/` | **Wired end-to-end**, two business rules pending |
+| 4 | `rec_del_pairing/` | **Implemented** — the stage-3 locations row plus the pairing group id |
 | 5 | `master_capacity/<feed>/<grain>/` | Scaffolded (15 folders), empty `logic.txt` |
 | 5 | `master_capacity/final/<grain>/` | **Wired end-to-end**, column models pending |
 
@@ -37,19 +37,18 @@ the three FINAL tables.
 
 - **Stage 3 in full.** Nothing is written. Rec-del pairing reads stage 3's
   locations tables, so those are the first thing worth filling in.
-- **Rec-del pairing: one hook**, marked `SPEC:` in
-  `src/transformations/stage_4/rec_del_pairing/pairing_base.py`:
-  - `term_columns_sql()` — the term transform. The placeholder passes the raw
-    window through and leaves `term_days` / `term_category` NULL.
-
-  The pairing itself is in place: one row per receipt/delivery location, each
-  carrying its contract's formation (`R-D`, `R-R-R-D-D-D`), the configured
-  pattern that admitted it, a `PAIRED` / `FAIL` status, and a `pair_set_id`
-  that restarts at 1 per contract and is shared by the locations that belong
-  together. A contract with one receipt and one delivery is therefore two rows
-  (set 1, 1); the pattern regex decides the set unit (`^(R-D)+$` gives
-  1,1,2,2, anything else makes the whole formation one set). Contracts no
-  pattern admits still appear, marked `FAIL`.
+- **Rec-del pairing: nothing pending.** Stage 4 reads the locations table
+  stage 3 finishes with (`<DECOMP_SCHEMA>.<feed>_locations`, after
+  standardization) and writes it back out row for row with the pairing on
+  the end: which side the location is (`R` / `D`), the contract's formation
+  (`R-D`, `R-R-R-D-D-D`), the configured pattern that admitted it, a
+  `PAIRED` / `FAIL` status, and a `pair_group_id` that restarts at 1 per
+  contract and is shared by the locations that belong together. A contract
+  with one receipt and one delivery is therefore two rows (group 1, 1); the
+  pattern regex decides the group unit (`^(R-D)+$` gives 1,1,2,2, anything
+  else makes the whole formation one group). Contracts no pattern admits
+  still appear, marked `FAIL` with no group id. See
+  `src/transformations/stage_4/rec_del_pairing/pairing_base.py`.
 - **Master capacity in full.** The target model already exists as
   `public.final_core_master_capacity` (27 columns). Note it lives in `public`
   with PascalCase columns, unlike everything else this repo writes — worth
@@ -223,6 +222,21 @@ present — that's the signal a drop is needed before it will load again.
 
 > This bites hardest while iterating on unfinished business rules: once a table
 > is created, editing its SQL changes nothing until you drop it.
+
+**Stage 5 model changes.** The per-feed master capacity tables are built from
+the shared model in `src/transformations/stage_5/master_capacity/models.py`.
+Changing that model (adding a column, changing a natural key) does not touch a
+per-feed table that already exists: it is only rebuilt when its own feed's
+stage 5 workflow reruns, which passes `--reload`. The FINAL tables check each
+per-feed table against the model before UNIONing it. A stale table that is
+**empty** (a feed that was not selected, or has no Bronze rows) is left out
+with a warning, so the final holds just the feeds that have data. A stale
+table that **holds rows** fails the final, naming the table, the missing
+column(s) and the feed to rerun, rather than silently publishing a final
+without that feed. Rerun the named feed's `*(stage3_4_5).yml` chain and
+`finals(stage5).yml` goes through on the next trigger. Only the
+`*(stage3_4_5).yml` orchestrators trigger `finals(stage5).yml` automatically;
+after a standalone per-grain stage 5 run, dispatch the finals by hand.
 
 ## Shipper scoping
 

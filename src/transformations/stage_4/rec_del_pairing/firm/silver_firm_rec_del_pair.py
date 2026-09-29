@@ -1,16 +1,14 @@
 """
 silver_firm_rec_del_pair.py
 ===========================
-Rec-del pairing for FIRM transport.
+Rec-del pairing for FIRM transport:
+`<DECOMP_SCHEMA>.firm_locations` -> `silver.firm_rec_del_pair`.
 
-Source: the firm locations table produced by the decomposition phase, after
-standardization(p4) has rewritten any pipeline-specific segment codes (Transco
-S8 / S9) into the feed's receipt / delivery descriptions.
-All pairing and term logic lives in the shared base -- see pairing_base.py in this package,
-where the `SPEC:` term hook is waiting for the business rule.
-
-TODO(confirm): the `column_map` overrides below are set to
-the expected decomposition output. Verify both once that phase lands.
+Source: the firm locations table as stage 3 leaves it -- decomposed by
+decompisition(p3), then standardized in place by standardization(p4), which
+rewrites Transco's S8 / S9 segment ends into the feed's own delivery / receipt
+descriptions. Every column of that row is carried through; the base appends
+the pairing and its group id (see pairing_base.py).
 """
 
 from __future__ import annotations
@@ -25,14 +23,9 @@ class SilverFirmRecDelPair(RecDelPairingTransformation):
     table_name = "firm_rec_del_pair"
     entity = "firm"
 
-    # The firm feed spells location purpose with the NAESB codes, not the
-    # REC/DEL default in table_config: M2 is a receipt point, MQ a delivery.
-    # Scoped to this subclass -- interruptible and awards still carry the
-    # default and need the same call made against their own data.
     column_map = {
         **RecDelPairingTransformation.column_map,
         "contract_key": "firmid",
         # Quoted: `index` is a SQL keyword.
         "loc_index": '"index"',
-        "loc_qty": "kqtyloc",
     }

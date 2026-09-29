@@ -1,14 +1,12 @@
 """
 silver_interruptible_rec_del_pair.py
 ====================================
-Rec-del pairing for INTERRUPTIBLE transport.
+Rec-del pairing for INTERRUPTIBLE transport:
+`<DECOMP_SCHEMA>.interruptible_locations` -> `silver.interruptible_rec_del_pair`.
 
-Source: the interruptible locations table produced by the decomposition phase.
-All pairing and term logic lives in the shared base -- see pairing_base.py in this package,
-where the `SPEC:` term hook is waiting for the business rule.
-
-TODO(confirm): the `column_map` overrides below are set to
-the expected decomposition output. Verify both once that phase lands.
+Source: the interruptible locations table as stage 3 leaves it. Every column
+of that row is carried through; the base appends the pairing and its group id
+(see pairing_base.py).
 """
 
 from __future__ import annotations
@@ -28,5 +26,4 @@ class SilverInterruptibleRecDelPair(RecDelPairingTransformation):
         "contract_key": "interruptibleid",
         # Quoted: `index` is a SQL keyword.
         "loc_index": '"index"',
-        "loc_qty": "itqtyloc",
     }
