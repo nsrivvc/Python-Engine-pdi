@@ -1,15 +1,26 @@
 """
 silver_firm_locations_master_capacity.py
 ========================================
-Maps the FIRM feed's stage-3 `firm_locations` onto the shared master capacity
-model, producing `silver.firm_locations_master_capacity`.
+Maps the FIRM feed's locations onto the shared master capacity model, producing
+`silver.firm_locations_master_capacity`.
+
+ROW FOR ROW WITH STAGE 4
+------------------------
+The source is stage 4's `silver.firm_rec_del_pair` -- the stage-3 locations
+row carried whole, plus the pairing -- not the stage-3 table itself. Every row
+stage 4 holds becomes exactly one row here: there is no latest-wins step
+(`dedupe = False`), so a contract that lists the same delivery point at four
+indexes keeps all four. The rows are written in stage 4's own order, so
+`firm_locations_id` lines up with `rec_del_row_id`.
+
+The column mapping is unchanged: every column it reads is a stage-3 locations
+column, which stage 4 carries through untouched.
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
 
 Unmapped target columns are emitted as typed NULLs -- this feed has no award,
-offer, bid or capacity-release fields. `SPEC:` markers below flag mappings that
-are inferred rather than confirmed.
+offer, bid or capacity-release fields.
 """
 
 from __future__ import annotations
@@ -24,8 +35,18 @@ class SilverFirmLocationsMasterCapacity(MasterCapacityTransformation):
     table_name = "firm_locations_master_capacity"
     feed = "firm"
     grain = "locations"
-    source_table = "firm_locations"
 
+    # Stage 4's output, in the Silver schema (see source_schema below).
+    source_table = "firm_rec_del_pair"
+
+    # One row out per stage-4 row, in stage 4's order. Nothing is collapsed.
+    dedupe = False
+    source_order = "rec_del_row_id"
+
+    @property
+    def source_schema(self) -> str:
+        """Stage 4 writes to the Silver schema; this reads it."""
+        return self.silver_schema
 
     # Mappings follow the agreed Locations sheet (gTRAN FIRM column):
     # Location <- Loc, Location Purpose Code <- LocPurpDesc, Capacity Type <-

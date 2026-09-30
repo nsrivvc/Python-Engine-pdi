@@ -26,9 +26,11 @@ class SilverFinalLocationsMasterCapacity(FinalMasterCapacityTransformation):
     # on a column mismatch. Single definition lives in ../../models.py.
     columns = LOCATIONS_COLUMNS
 
-    # One row per contract/location/purpose per feed -- a location can serve
-    # both receipt and delivery on one contract, so purpose is in the key,
-    # mirroring the per-feed natural key in models.py.
-    natural_key = ("source_type", "ngh_contract_id", "location", "location_purpose_code")
+    # One row per contract/location/purpose/index per feed, mirroring the
+    # per-feed natural key in models.py. Purpose is in the key because a
+    # location can serve both receipt and delivery on one contract; index is
+    # in it because the same location and purpose recur at several positions
+    # of one contract's Locations array, and each is its own row.
+    natural_key = ("source_type", "ngh_contract_id", "location", "location_purpose_code", "index")
 
-    dedupe_note = "one row per contract/location/purpose per feed"
+    dedupe_note = "one row per contract/location/purpose/index per feed"
