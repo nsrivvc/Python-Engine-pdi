@@ -9,7 +9,9 @@ Same shape as the firm grain (see ../../firm/locations/): the source is stage
 plus the pairing -- read row for row with no latest-wins step, written in
 stage 4's order. `group` numbers the awards in this table (1..N in award-number
 order, every row of an award carrying its number) and `pair_group_id` is stage
-4's receipt/delivery pairing id, carried as is.
+4's receipt/delivery pairing id, carried as is. As for firm, the seasonal
+window falls back to the award's release term when the element posts none,
+and a row with no quantity of its own takes its pairing's.
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
@@ -30,6 +32,9 @@ from __future__ import annotations
 
 from ...master_base import MasterCapacityTransformation
 from ......core.registry import register
+
+#: The location's own quantity, as posted.
+_QTY = "NULLIF(awardquantitylocation, '')::NUMERIC"
 
 
 @register
@@ -60,13 +65,18 @@ class SilverAwardsLocationsMasterCapacity(MasterCapacityTransformation):
         "location_qti": "locationquantitytypeindicator",
         "location_purpose_code": "locationpurposecode",
         "capacity_type": "capacitytypelocationindicator",
-        "quantity": "NULLIF(awardquantitylocation, '')::NUMERIC",
+        # the pairing's quantity: own value, else the pair's
+        "quantity": (
+            f"CASE WHEN pair_group_id IS NULL THEN {_QTY} "
+            f"ELSE coalesce({_QTY}, max({_QTY}) OVER (PARTITION BY awardnumber, pair_group_id)) END"
+        ),
         # Elements carry only a SEASONAL window; the contract window is the
-        # award-level release term, carried down as a parent column.
+        # award-level release term, carried down as a parent column, which is
+        # also what the seasonal window falls back to when an element has none.
         "beg_date": "NULLIF(releasetermstartdate, '')::TIMESTAMPTZ",
         "end_date": "NULLIF(releasetermenddate, '')::TIMESTAMPTZ",
-        "season_beg_date": "NULLIF(seasonalstartdate, '')::TIMESTAMPTZ",
-        "season_end_date": "NULLIF(seasonalenddate, '')::TIMESTAMPTZ",
+        "season_beg_date": "coalesce(NULLIF(seasonalstartdate, '')::TIMESTAMPTZ, NULLIF(releasetermstartdate, '')::TIMESTAMPTZ)",
+        "season_end_date": "coalesce(NULLIF(seasonalenddate, '')::TIMESTAMPTZ, NULLIF(releasetermenddate, '')::TIMESTAMPTZ)",
         "transaction_term_begin_datetime": "NULLIF(releasetermstartdate, '')::TIMESTAMPTZ",
         "transaction_term_end_datetime": "NULLIF(releasetermenddate, '')::TIMESTAMPTZ",
         "posted_date": "NULLIF(postdatetime, '')::TIMESTAMPTZ",

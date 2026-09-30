@@ -29,6 +29,21 @@ rebuilds as long as the contract set is. Computed here.
 restarts at 1 inside every contract and tells which receipt goes with which
 delivery (R-D-R-D -> 1,1,2,2); NULL when no pattern admitted the contract.
 
+TWO DERIVED VALUES
+------------------
+`season_beg_date` / `season_end_date` come from the location's own seasonal
+window (SeasnlSt / SeasnlEnd) when the feed posts one, else from the
+CONTRACT's term (KBegDateTime / KEndDateTime, carried onto every location row
+as transactiontermbegindatetime / transactiontermenddatetime). Transco posts
+no seasonal window at all, so every one of its rows shows the contract term.
+
+`quantity` is the pairing's quantity. Transco puts the volume on the delivery
+(S8) row and leaves the receipt (S9) row blank, so a row with no quantity of
+its own takes its pairing's (same contract, same pair_group_id): both rows of
+pair 1 read the same number, both rows of pair 2 the same number. A row that
+has its own quantity keeps it; a row no pattern paired (pair_group_id NULL)
+is left as posted.
+
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
 
@@ -40,6 +55,9 @@ from __future__ import annotations
 
 from ...master_base import MasterCapacityTransformation
 from ......core.registry import register
+
+#: The location's own quantity, as posted.
+_QTY = "NULLIF(kqtyloc, '')::NUMERIC"
 
 
 @register
@@ -76,11 +94,16 @@ class SilverFirmLocationsMasterCapacity(MasterCapacityTransformation):
         "location_qti": "locqti",
         "location_purpose_code": "locpurpdesc",
         "capacity_type": "captypename",
-        "quantity": "NULLIF(kqtyloc, '')::NUMERIC",
+        # the pairing's quantity: own value, else the pair's (see above)
+        "quantity": (
+            f"CASE WHEN pair_group_id IS NULL THEN {_QTY} "
+            f"ELSE coalesce({_QTY}, max({_QTY}) OVER (PARTITION BY firmid, pair_group_id)) END"
+        ),
         "beg_date": "NULLIF(kentbegdatetime, '')::TIMESTAMPTZ",
         "end_date": "NULLIF(kentenddatetime, '')::TIMESTAMPTZ",
-        "season_beg_date": "NULLIF(seasnlst, '')::TIMESTAMPTZ",
-        "season_end_date": "NULLIF(seasnlend, '')::TIMESTAMPTZ",
+        # the location's seasonal window, else the contract's term (see above)
+        "season_beg_date": "coalesce(NULLIF(seasnlst, '')::TIMESTAMPTZ, NULLIF(transactiontermbegindatetime, '')::TIMESTAMPTZ)",
+        "season_end_date": "coalesce(NULLIF(seasnlend, '')::TIMESTAMPTZ, NULLIF(transactiontermenddatetime, '')::TIMESTAMPTZ)",
         "transaction_term_begin_datetime": "NULLIF(transactiontermbegindatetime, '')::TIMESTAMPTZ",
         "transaction_term_end_datetime": "NULLIF(transactiontermenddatetime, '')::TIMESTAMPTZ",
         "segment": "segment",
