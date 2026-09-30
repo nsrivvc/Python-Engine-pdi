@@ -25,6 +25,16 @@ type. That is deliberate: a feed that genuinely has no award number should say s
 by omission rather than by inventing a column, and it keeps every feed's table
 UNION-compatible without forcing fake values.
 
+ROW FOR ROW, OR LATEST-WINS
+---------------------------
+By default the mapped rows pass through a latest-wins step per natural key, so
+a source holding more than one row per key cannot make the upsert touch the
+same target row twice. A subclass whose source is already one row per output
+row sets `dedupe = False` and gets exactly the source's rows -- nothing is
+collapsed, and a genuine key collision fails the run instead of silently
+dropping a row. Firm locations does this: it reads stage 4's rec-del table
+(see firm/locations/), so stage 5 holds the same rows stage 4 does.
+
 WHERE THE COLUMNS COME FROM
 ---------------------------
 `models.py`, shared with the finals, so the two can never drift apart.
@@ -52,6 +62,15 @@ class MasterCapacityTransformation(PipelineTransformation):
     grain: str = ""                   # "core" | "locations" | "rates"
     source_table: str = ""            # stage-3 output in DECOMP_SCHEMA
     column_map: Dict[str, str] = {}   # target column -> SQL expression
+
+    #: Collapse the mapped rows to the latest one per natural key before
+    #: writing. Set False when the source is already one row per output row
+    #: and every one of them must land (see the module docstring).
+    dedupe: bool = True
+
+    #: Optional source expression the rows are written in the order of, so the
+    #: target's serial id follows the source's own order. Empty = unordered.
+    source_order: str = ""
 
     def __init__(self) -> None:
         for attr in ("feed", "grain", "source_table"):
@@ -112,14 +131,14 @@ class MasterCapacityTransformation(PipelineTransformation):
         updates = sep.join(f"{_q(n):<38} = EXCLUDED.{_q(n)}" for n in updatable)
         key = ", ".join(_q(k) for k in self.natural_key)
 
-        # Latest wins per natural key, so a source holding more than one row per
-        # key cannot make the upsert touch the same target row twice.
-        return f"""
-        WITH mapped AS (
-            SELECT
-            {select}
-            FROM {self.source_schema}.{self.source_table}
-        ),
+        # `_ord` rides along only to order the write; it is never inserted.
+        order_col = f"{sep}{self.source_order} AS _ord" if self.source_order else ""
+        order_by = "ORDER BY _ord" if self.source_order else ""
+
+        if self.dedupe:
+            # Latest wins per natural key, so a source holding more than one
+            # row per key cannot make the upsert touch the same target row twice.
+            dedupe_cte = f""",
         deduped AS (
             SELECT * FROM (
                 SELECT m.*, row_number() OVER (
@@ -127,13 +146,28 @@ class MasterCapacityTransformation(PipelineTransformation):
                     ORDER BY update_date DESC NULLS LAST, posted_date DESC NULLS LAST) AS _rn
                 FROM mapped m
             ) x WHERE _rn = 1
-        )
+        )"""
+            rows = "deduped"
+        else:
+            # Row for row: every source row lands. The ON CONFLICT below then
+            # only ever fires on a rerun without --reload; two source rows
+            # sharing a key fail the statement rather than losing one.
+            dedupe_cte = ""
+            rows = "mapped"
+
+        return f"""
+        WITH mapped AS (
+            SELECT
+            {select}{order_col}
+            FROM {self.source_schema}.{self.source_table}
+        ){dedupe_cte}
         INSERT INTO {s}.{self.table_name} AS tgt (
             {insert}
         )
         SELECT
             {insert}
-        FROM deduped
+        FROM {rows}
+        {order_by}
         ON CONFLICT ({key}) DO UPDATE SET
             {updates},
             silver_loaded_ts                       = now();

@@ -134,10 +134,15 @@ COLUMNS_BY_GRAIN = {
 }
 
 #: Natural key per grain, used by both the per-feed tables and the finals.
-#: Locations: contract + location + purpose mirrors the feed's own UniqueKey
-#: ("TCO-F000001|100011|REC"), so it is unique by construction.
+#: Locations: contract + location + purpose + INDEX. The index is part of the
+#: key because one contract legitimately lists the same location, with the
+#: same purpose, at several positions of its Locations array carrying
+#: different quantities (Transco delivers to one point from four receipt
+#: pools: R-D-R-D-R-D-R-D). Without it those rows collapsed into one and
+#: stage 5 held fewer locations than stage 4. A feed with no index (awards)
+#: leaves it NULL, and NULLS NOT DISTINCT keeps its key as it was.
 NATURAL_KEY_BY_GRAIN = {
     "core": ("ngh_contract_id",),
-    "locations": ("ngh_contract_id", "location", "location_purpose_code"),
+    "locations": ("ngh_contract_id", "location", "location_purpose_code", "index"),
     "rates": ("ngh_contract_id", "rate_unique_id", "rate_sequence"),
 }
