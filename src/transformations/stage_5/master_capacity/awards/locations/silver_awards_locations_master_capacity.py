@@ -1,8 +1,15 @@
 """
 silver_awards_locations_master_capacity.py
 ==========================================
-Maps the AWARDS feed's stage-3 `awards_locations` onto the shared master capacity
-model, producing `silver.awards_locations_master_capacity`.
+Maps the AWARDS feed's locations onto the shared master capacity model,
+producing `silver.awards_locations_master_capacity`.
+
+Same shape as the firm grain (see ../../firm/locations/): the source is stage
+4's `silver.awards_rec_del_pair` -- the stage-3 locations row carried whole,
+plus the pairing -- read row for row with no latest-wins step, written in
+stage 4's order. `group` numbers the awards in this table (1..N in award-number
+order, every row of an award carrying its number) and `pair_group_id` is stage
+4's receipt/delivery pairing id, carried as is.
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
@@ -31,10 +38,23 @@ class SilverAwardsLocationsMasterCapacity(MasterCapacityTransformation):
     table_name = "awards_locations_master_capacity"
     feed = "awards"
     grain = "locations"
-    source_table = "awards_locations"
+
+    # Stage 4's output, in the Silver schema (see source_schema below).
+    source_table = "awards_rec_del_pair"
+
+    # One row out per stage-4 row, in stage 4's order. Nothing is collapsed.
+    dedupe = False
+    source_order = "rec_del_row_id"
+
+    @property
+    def source_schema(self) -> str:
+        """Stage 4 writes to the Silver schema; this reads it."""
+        return self.silver_schema
 
     column_map = {
         "ngh_contract_id": "awardnumber",
+        "group": "dense_rank() OVER (ORDER BY awardnumber)::TEXT",
+        "pair_group_id": "pair_group_id",
         "location": "locationpropcode",
         "location_name": "locationname",
         "location_qti": "locationquantitytypeindicator",

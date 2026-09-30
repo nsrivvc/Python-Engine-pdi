@@ -62,8 +62,16 @@ CORE_COLUMNS: List[Column] = [
 
 #: The agreed Locations mapping sheet, target names snake_cased, in sheet
 #: order. `index` and `group` are Postgres keywords -- the DDL/DML builders
-#: quote them (see _q in master_base / final_base). `group` has no source in
-#: any feed yet and stays NULL until one is mapped.
+#: quote them (see _q in master_base / final_base).
+#:
+#: Two grouping columns, both from the feed's stage 4 rec-del table, which is
+#: what every locations grain reads:
+#:   group          the contract's number within the per-feed table (1..N in
+#:                  contract-id order; every row of a contract carries it)
+#:   pair_group_id  stage 4's receipt/delivery pairing id, which restarts at 1
+#:                  inside each contract (R-D-R-D -> 1,1,2,2) and says which
+#:                  receipt goes with which delivery; NULL when no pattern
+#:                  admitted the contract's formation
 LOCATIONS_COLUMNS: List[Column] = [
     ("ngh_contract_id", "TEXT"),          # contract join key (sheet: GS_ID linkage)
     ("location", "TEXT"),
@@ -82,6 +90,7 @@ LOCATIONS_COLUMNS: List[Column] = [
     ("segment", "TEXT"),
     ("index", "BIGINT"),
     ("group", "TEXT"),
+    ("pair_group_id", "INTEGER"),
     # pipeline lineage, not on the sheet: the upsert's latest-wins dedupe
     # orders by update_date / posted_date, and source names the feed.
     ("posted_date", "TIMESTAMPTZ"),
