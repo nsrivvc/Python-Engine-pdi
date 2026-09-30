@@ -13,8 +13,12 @@ stage 4 holds becomes exactly one row here: there is no latest-wins step
 indexes keeps all four. The rows are written in stage 4's own order, so
 `firm_locations_id` lines up with `rec_del_row_id`.
 
-The column mapping is unchanged: every column it reads is a stage-3 locations
-column, which stage 4 carries through untouched.
+Every other column it reads is a stage-3 locations column, which stage 4
+carries through untouched. `group` is the one column that comes from the
+pairing itself: stage 4's `pair_group_id`, which restarts at 1 for every
+contract and is shared by the locations of one receipt/delivery pairing
+(R-D-R-D -> 1,1,2,2). It is NULL on a row no pattern admitted (pair_status
+FAIL).
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
@@ -51,10 +55,11 @@ class SilverFirmLocationsMasterCapacity(MasterCapacityTransformation):
     # Mappings follow the agreed Locations sheet (gTRAN FIRM column):
     # Location <- Loc, Location Purpose Code <- LocPurpDesc, Capacity Type <-
     # CapTypeName, Quantity <- KQtyLoc, and so on. `ngh_contract_id` is the
-    # contract key (firmid) tying this grain back to core; `group` has no firm
-    # source and stays NULL.
+    # contract key (firmid) tying this grain back to core; `group` is the
+    # rec-del pairing group id stage 4 assigned within that contract.
     column_map = {
         "ngh_contract_id": "firmid",
+        "group": "pair_group_id::TEXT",
         "location": "loc",
         "location_name": "locname",
         "zone": "loczn",
