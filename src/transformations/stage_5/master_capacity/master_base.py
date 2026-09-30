@@ -32,8 +32,10 @@ a source holding more than one row per key cannot make the upsert touch the
 same target row twice. A subclass whose source is already one row per output
 row sets `dedupe = False` and gets exactly the source's rows -- nothing is
 collapsed, and a genuine key collision fails the run instead of silently
-dropping a row. Firm locations does this: it reads stage 4's rec-del table
-(see firm/locations/), so stage 5 holds the same rows stage 4 does.
+dropping a row. Every feed's LOCATIONS grain does this: it reads the feed's
+stage 4 rec-del table (`silver.<feed>_rec_del_pair`) rather than stage 3, so
+stage 5 holds the same rows stage 4 does and can carry the pairing columns
+(`group`, `pair_group_id`). Core and rates still read stage 3.
 
 WHERE THE COLUMNS COME FROM
 ---------------------------

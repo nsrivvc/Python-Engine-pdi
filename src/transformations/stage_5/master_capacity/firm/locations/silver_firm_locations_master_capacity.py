@@ -14,20 +14,20 @@ indexes keeps all four. The rows are written in stage 4's own order, so
 `firm_locations_id` lines up with `rec_del_row_id`.
 
 Every column it reads is a stage-3 locations column, which stage 4 carries
-through untouched, except `group`, which is computed here.
+through untouched, except the two grouping columns below.
 
-THE GROUP ID
-------------
+THE TWO GROUPING COLUMNS
+------------------------
 `group` numbers the CONTRACTS in this table: 1 for the first contract, 2 for
 the next, and so on, with every location row of a contract carrying its
 contract's number. Ten contracts give exactly ten group ids, 1 to 10, however
 many rows each contract has (three rows of group 1, four of group 2, ...).
 Contracts are numbered in contract-id order, so the numbering is stable across
-rebuilds as long as the contract set is.
+rebuilds as long as the contract set is. Computed here.
 
-This is deliberately NOT stage 4's `pair_group_id`, which restarts at 1
-inside every contract and tells which receipt goes with which delivery
-(R-D-R-D -> 1,1,2,2). That finer grouping stays on the stage 4 table.
+`pair_group_id` is stage 4's receipt/delivery pairing id, carried as is. It
+restarts at 1 inside every contract and tells which receipt goes with which
+delivery (R-D-R-D -> 1,1,2,2); NULL when no pattern admitted the contract.
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
@@ -64,11 +64,12 @@ class SilverFirmLocationsMasterCapacity(MasterCapacityTransformation):
     # Mappings follow the agreed Locations sheet (gTRAN FIRM column):
     # Location <- Loc, Location Purpose Code <- LocPurpDesc, Capacity Type <-
     # CapTypeName, Quantity <- KQtyLoc, and so on. `ngh_contract_id` is the
-    # contract key (firmid) tying this grain back to core; `group` is the
-    # contract's number within this table (see THE GROUP ID above).
+    # contract key (firmid) tying this grain back to core; `group` and
+    # `pair_group_id` are the two grouping columns described above.
     column_map = {
         "ngh_contract_id": "firmid",
         "group": "dense_rank() OVER (ORDER BY firmid)::TEXT",
+        "pair_group_id": "pair_group_id",
         "location": "loc",
         "location_name": "locname",
         "zone": "loczn",
