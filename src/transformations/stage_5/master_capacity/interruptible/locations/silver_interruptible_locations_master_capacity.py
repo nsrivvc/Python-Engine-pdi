@@ -10,6 +10,8 @@ whole, plus the pairing -- read row for row with no latest-wins step, written
 in stage 4's order. `group` numbers the contracts in this table (1..N in
 contract-id order, every row of a contract carrying its number) and
 `pair_group_id` is stage 4's receipt/delivery pairing id, carried as is.
+As for firm, the seasonal window falls back to the contract's term when the
+feed posts none, and a row with no quantity of its own takes its pairing's.
 
 That model lives in ../../models.py and is shared with the FINAL
 transformations, which UNION every feed's table for this grain into one.
@@ -22,6 +24,9 @@ from __future__ import annotations
 
 from ...master_base import MasterCapacityTransformation
 from ......core.registry import register
+
+#: The location's own quantity, as posted.
+_QTY = "NULLIF(itqtyloc, '')::NUMERIC"
 
 
 @register
@@ -56,11 +61,16 @@ class SilverInterruptibleLocationsMasterCapacity(MasterCapacityTransformation):
         "location_qti": "locqti",
         "location_purpose_code": "locpurpdesc",
         "capacity_type": "captypename",
-        "quantity": "NULLIF(itqtyloc, '')::NUMERIC",
+        # the pairing's quantity: own value, else the pair's
+        "quantity": (
+            f"CASE WHEN pair_group_id IS NULL THEN {_QTY} "
+            f"ELSE coalesce({_QTY}, max({_QTY}) OVER (PARTITION BY interruptibleid, pair_group_id)) END"
+        ),
         "beg_date": "NULLIF(kentbegdatetime, '')::TIMESTAMPTZ",
         "end_date": "NULLIF(kentenddatetime, '')::TIMESTAMPTZ",
-        "season_beg_date": "NULLIF(seasnlst, '')::TIMESTAMPTZ",
-        "season_end_date": "NULLIF(seasnlend, '')::TIMESTAMPTZ",
+        # the location's seasonal window, else the contract's term
+        "season_beg_date": "coalesce(NULLIF(seasnlst, '')::TIMESTAMPTZ, NULLIF(transactiontermbegindatetime, '')::TIMESTAMPTZ)",
+        "season_end_date": "coalesce(NULLIF(seasnlend, '')::TIMESTAMPTZ, NULLIF(transactiontermenddatetime, '')::TIMESTAMPTZ)",
         "transaction_term_begin_datetime": "NULLIF(transactiontermbegindatetime, '')::TIMESTAMPTZ",
         "transaction_term_end_datetime": "NULLIF(transactiontermenddatetime, '')::TIMESTAMPTZ",
         "segment": "segment",
